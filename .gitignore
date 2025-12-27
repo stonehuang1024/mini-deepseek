@@ -182,7 +182,7 @@ saved_model/
 *.csv
 *.parquet
 *.avro
-data/
+#data/
 dataset/
 
 # Sample data (if large)

@@ -239,7 +239,7 @@ data:
   # RL dataset (prompts only: ~5MB)
   rl:
     dataset_name: Anthropic/hh-rlhf
-    dataset_config: helpful-base
+    dataset_config: default
     data_dir: data/rl
     max_seq_length: 256
     max_samples: 1000

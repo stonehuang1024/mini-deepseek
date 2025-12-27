@@ -139,9 +139,13 @@ class RotaryEmbedding(nn.Module):
         """
         seq_len = x.shape[2]
         
-        # Extend cache if needed
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len, x.device)
+        # Extend cache if needed - check both seq_len and max position_id
+        max_pos = seq_len
+        if position_ids is not None:
+            max_pos = max(max_pos, int(position_ids.max().item()) + 1)
+        
+        if max_pos > self.max_seq_len_cached:
+            self._set_cos_sin_cache(max_pos, x.device)
         
         if position_ids is None:
             cos = self.cos_cached[:, :, :seq_len, :]

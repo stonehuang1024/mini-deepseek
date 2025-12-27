@@ -1,323 +1,297 @@
+#!/usr/bin/env python3
 """
 DeepSeek V3 Web Chat Interface
 ==============================
 
-Flask-based web chat interface with:
-- Model switching from checkpoints directory
-- Streaming token output
-- ChatGPT-style UI
+A ChatGPT-style web interface for the DeepSeek V3 model.
+
+Features:
+- Model selection from checkpoints directory
+- Streaming token generation (SSE)
+- Cancel generation support
+- Dark theme UI
+
+Usage:
+    python chat/app.py
+    # or
+    ./scripts/run.sh web-chat
 """
 
 import os
 import sys
 import json
-import time
 import threading
+import time
 from pathlib import Path
-from typing import Dict, Generator, Optional
-from queue import Queue
-
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from typing import Optional, Dict, Any, List, Generator
+from dataclasses import dataclass
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import load_config, get_device
-from deepseek.inference.inference import DeepSeekInference, load_model_for_inference
+from flask import Flask, render_template, request, Response, jsonify, stream_with_context
 
-app = Flask(__name__)
+import torch
+import torch.nn.functional as F
+
+from config import load_config, get_device
+from deepseek.model import DeepSeekV3Model
+from deepseek.data import get_tokenizer
+from deepseek.utils import get_logger
+
+logger = get_logger(__name__)
+
+app = Flask(__name__, template_folder="templates", static_folder="static")
 
 # Global state
-models_cache: Dict[str, DeepSeekInference] = {}
-models_lock = threading.Lock()
-model_loading_status: Dict[str, str] = {}
-
-# Generation task management
-generation_tasks: Dict[str, bool] = {}  # task_id -> should_cancel
-generation_tasks_lock = threading.Lock()
+_model_cache: Dict[str, Any] = {}
+_model_lock = threading.Lock()
+_current_model_name: Optional[str] = None
+_cancel_generation = threading.Event()
+_generation_in_progress = threading.Event()
 
 
-def list_checkpoints(checkpoints_dir: str = "checkpoints") -> Dict[str, dict]:
+@dataclass
+class CheckpointInfo:
+    """Information about a checkpoint file."""
+    name: str
+    path: str
+    size_mb: float
+    category: str
+    modified_time: float
+
+
+def list_checkpoints(checkpoints_dir: str = "checkpoints") -> List[CheckpointInfo]:
     """
-    List all available model checkpoints.
+    Discover all checkpoint files in the checkpoints directory.
     
     Returns:
-        Dict mapping model names to metadata
+        List of CheckpointInfo objects sorted by category and name
     """
-    checkpoints_path = PROJECT_ROOT / checkpoints_dir
-    if not checkpoints_path.exists():
-        return {}
+    checkpoints = []
+    base_path = PROJECT_ROOT / checkpoints_dir
     
-    models = {}
+    if not base_path.exists():
+        logger.warning(f"Checkpoints directory not found: {base_path}")
+        return checkpoints
     
-    for root, dirs, files in os.walk(checkpoints_path):
-        for file in files:
-            if file.endswith('.pt'):
-                # Create relative path from checkpoints directory
-                full_path = Path(root) / file
-                model_name = str(full_path.relative_to(checkpoints_path)).replace('\\', '/')
-                
-                # Get file size and modification time
-                stat = full_path.stat()
-                
-                # Determine model type from path
-                model_type = "unknown"
-                if "pretrain" in model_name.lower():
-                    model_type = "Pretrained"
-                elif "sft" in model_name.lower():
-                    model_type = "SFT"
-                elif "rl" in model_name.lower() or "grpo" in model_name.lower() or "ppo" in model_name.lower() or "dpo" in model_name.lower():
-                    model_type = "RL"
-                
-                models[model_name] = {
-                    "path": str(full_path),
-                    "name": model_name,
-                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                    "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
-                    "type": model_type
-                }
-    
-    return models
-
-
-def load_model(model_name: str) -> DeepSeekInference:
-    """
-    Load a model with caching.
-    
-    Args:
-        model_name: Path to model checkpoint (relative to checkpoints)
+    for pt_file in base_path.rglob("*.pt"):
+        rel_path = pt_file.relative_to(base_path)
+        parts = rel_path.parts
         
+        # Determine category from directory structure
+        if len(parts) > 1:
+            category = parts[0].upper()
+        else:
+            category = "OTHER"
+        
+        # Map category names
+        category_map = {
+            "PRETRAIN": "Pretrained",
+            "SFT": "SFT",
+            "RL": "RL",
+            "GRPO": "RL-GRPO",
+            "PPO": "RL-PPO",
+            "DPO": "RL-DPO",
+        }
+        category = category_map.get(category, category)
+        
+        size_mb = pt_file.stat().st_size / (1024 * 1024)
+        modified_time = pt_file.stat().st_mtime
+        
+        checkpoints.append(CheckpointInfo(
+            name=str(rel_path),
+            path=str(pt_file),
+            size_mb=size_mb,
+            category=category,
+            modified_time=modified_time,
+        ))
+    
+    # Sort by category, then by name
+    checkpoints.sort(key=lambda x: (x.category, x.name))
+    return checkpoints
+
+
+def get_default_checkpoint() -> Optional[str]:
+    """Get the default checkpoint path (prefer pretrain/final.pt)."""
+    checkpoints = list_checkpoints()
+    
+    if not checkpoints:
+        return None
+    
+    # Prefer pretrain checkpoints
+    for ckpt in checkpoints:
+        if "pretrain" in ckpt.name.lower() and "final" in ckpt.name.lower():
+            return ckpt.path
+    
+    for ckpt in checkpoints:
+        if "pretrain" in ckpt.name.lower() and "best" in ckpt.name.lower():
+            return ckpt.path
+    
+    # Return first available
+    return checkpoints[0].path
+
+
+def load_model(checkpoint_path: str) -> Dict[str, Any]:
+    """
+    Load a model from checkpoint with caching.
+    
     Returns:
-        DeepSeekInference instance
+        Dict with 'model', 'tokenizer', 'config'
     """
-    global models_cache, model_loading_status
+    global _current_model_name
     
-    with models_lock:
-        # Check if already loading
-        if model_name in model_loading_status and model_loading_status[model_name] == "loading":
-            raise ValueError(f"Model {model_name} is already loading. Please wait.")
+    with _model_lock:
+        if checkpoint_path in _model_cache:
+            _current_model_name = checkpoint_path
+            logger.info(f"Using cached model: {checkpoint_path}")
+            return _model_cache[checkpoint_path]
         
-        # Check if already loaded
-        if model_name in models_cache:
-            return models_cache[model_name]
+        logger.info(f"Loading model from: {checkpoint_path}")
         
-        # Set loading status
-        model_loading_status[model_name] = "loading"
-    
-    try:
-        # Build full path - model_name is relative to checkpoints directory
-        full_path = PROJECT_ROOT / "checkpoints" / model_name
+        # Load config
+        config = load_config(str(PROJECT_ROOT / "configs" / "config_default.yaml"))
         
-        if not full_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {full_path}")
+        # Load tokenizer
+        tokenizer = get_tokenizer(config.data)
+        config.model.vocab_size = len(tokenizer)
         
-        print(f"Loading model from: {full_path}")
+        # Create model
+        model = DeepSeekV3Model(config.model)
         
-        # Load model
-        model, tokenizer, config = load_model_for_inference(str(full_path))
+        # Load checkpoint
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            logger.info(f"Loaded checkpoint: {checkpoint_path}")
+        else:
+            logger.warning(f"Checkpoint not found: {checkpoint_path}, using random weights")
         
-        print(f"Model loaded successfully. Creating inference wrapper...")
+        # Move to device - use CPU for web server to avoid MPS threading issues
+        # MPS has issues with Flask's threaded mode on macOS
+        device = "cpu"
+        model.to(device)
+        model.eval()
         
-        # Create inference wrapper
-        inference = DeepSeekInference(
-            model=model,
-            tokenizer=tokenizer,
-            config=config.inference,
-            device="auto"
-        )
+        result = {
+            'model': model,
+            'tokenizer': tokenizer,
+            'config': config,
+            'device': device,
+        }
         
-        print(f"Inference wrapper created. Caching model...")
+        _model_cache[checkpoint_path] = result
+        _current_model_name = checkpoint_path
         
-        # Cache the model
-        with models_lock:
-            models_cache[model_name] = inference
-            model_loading_status[model_name] = "loaded"
-        
-        print(f"Model {model_name} loaded and cached successfully")
-        
-        return inference
-    
-    except Exception as e:
-        print(f"Error loading model {model_name}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        with models_lock:
-            model_loading_status[model_name] = "error"
-        raise e
-
-
-def unload_model(model_name: str):
-    """Unload a model from cache to free memory."""
-    global models_cache, model_loading_status
-    
-    with models_lock:
-        if model_name in models_cache:
-            del models_cache[model_name]
-        if model_name in model_loading_status:
-            del model_loading_status[model_name]
+        return result
 
 
 def generate_stream(
-    inference: DeepSeekInference,
+    model: DeepSeekV3Model,
+    tokenizer: Any,
+    device: str,
     prompt: str,
-    task_id: str,
-    **kwargs
+    max_new_tokens: int = 256,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
+    top_k: int = 50,
+    repetition_penalty: float = 1.1,
 ) -> Generator[str, None, None]:
     """
-    Stream text generation.
-    
-    Args:
-        inference: DeepSeekInference instance
-        prompt: Input prompt
-        task_id: Unique identifier for this generation task
-        **kwargs: Generation parameters
-        
+    Stream token generation.
+
     Yields:
-        Generated tokens
+        Generated tokens one at a time
     """
-    import torch
-    import torch.nn.functional as F
-    
-    device = inference.device
-    tokenizer = inference.tokenizer
+    _generation_in_progress.set()
+    _cancel_generation.clear()
     
     try:
         input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
-    except Exception as e:
-        yield json.dumps({"error": f"Tokenization failed: {str(e)}", "done": True}) + "\n"
-        return
+        generated = input_ids
+        past_key_values = None
+        
+        eos_token_id = tokenizer.eos_token_id
+        
+        with torch.no_grad():
+            for _ in range(max_new_tokens):
+                # Check for cancellation
+                if _cancel_generation.is_set():
+                    logger.info("Generation cancelled by user")
+                    yield "[CANCELLED]"
+                    break
+                
+                # Forward pass
+                if past_key_values is not None:
+                    curr_input = generated[:, -1:]
+                else:
+                    curr_input = generated
+                
+                outputs = model(
+                    input_ids=curr_input,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+                
+                logits = outputs['logits'][:, -1, :]
+                past_key_values = outputs['past_key_values']
+                
+                # Apply repetition penalty
+                if repetition_penalty != 1.0:
+                    vocab_size = logits.size(-1)
+                    for token_id in set(generated[0].tolist()):
+                        if 0 <= token_id < vocab_size:
+                            logits[0, token_id] /= repetition_penalty
+                
+                # Temperature scaling
+                if temperature > 0 and temperature != 1.0:
+                    logits = logits / temperature
+                
+                # Top-K filtering
+                if top_k > 0:
+                    top_k_val = min(top_k, logits.size(-1))
+                    indices_to_remove = logits < torch.topk(logits, top_k_val)[0][:, -1, None]
+                    logits[indices_to_remove] = float('-inf')
+                
+                # Top-P (nucleus) filtering
+                if top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                    
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()
+                    sorted_indices_to_remove[:, 0] = 0
+                    
+                    indices_to_remove = sorted_indices_to_remove.scatter(
+                        1, sorted_indices, sorted_indices_to_remove
+                    )
+                    logits[indices_to_remove] = float('-inf')
+                
+                # Sample
+                probs = F.softmax(logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                
+                # Append
+                generated = torch.cat([generated, next_token], dim=1)
+                
+                # Check for EOS
+                if next_token[0, 0].item() == eos_token_id:
+                    break
+                
+                # Decode and yield token
+                token_text = tokenizer.decode(next_token[0], skip_special_tokens=False)
+                if token_text:
+                    yield token_text
     
-    # Generation parameters
-    max_new_tokens = kwargs.get('max_new_tokens', 512)
-    temperature = kwargs.get('temperature', 0.7)
-    top_p = kwargs.get('top_p', 0.9)
-    top_k = kwargs.get('top_k', 50)
-    do_sample = kwargs.get('do_sample', True)
-    repetition_penalty = kwargs.get('repetition_penalty', 1.1)
-    
-    eos_token_id = tokenizer.eos_token_id if hasattr(tokenizer, 'eos_token_id') else None
-    
-    generated = input_ids
-    past_key_values = None
-    response_tokens = []
-    
-    def sample_token(logits, temperature, top_p, top_k, do_sample):
-        """Sample a single token from logits."""
-        # Temperature
-        if temperature != 1.0 and temperature > 0:
-            logits = logits / temperature
-        
-        if not do_sample:
-            return torch.argmax(logits, dim=-1, keepdim=True)
-        
-        # Top-K filtering
-        if top_k > 0:
-            top_k = min(top_k, logits.size(-1))
-            values, indices = torch.topk(logits, top_k)
-            logits = torch.full_like(logits, float('-inf'))
-            logits.scatter_(1, indices, values)
-        
-        # Top-P (nucleus) filtering
-        if top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            
-            # Remove tokens with cumulative probability above the threshold
-            sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep first token
-            sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()
-            sorted_indices_to_remove[:, 0] = 0
-            
-            # Scatter back to original indices
-            indices_to_remove = sorted_indices_to_remove.scatter(
-                1, sorted_indices, sorted_indices_to_remove
-            )
-            logits = logits.masked_fill(indices_to_remove, float('-inf'))
-        
-        # Sample
-        probs = F.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-        
-        return next_token
-    
-    try:
-        for step in range(max_new_tokens):
-            # Check for cancellation
-            with generation_tasks_lock:
-                if task_id in generation_tasks and generation_tasks[task_id]:
-                    yield json.dumps({"token": "", "done": True, "cancelled": True}) + "\n"
-                    return
-            
-            # Forward pass
-            if past_key_values is not None:
-                curr_input = generated[:, -1:]
-            else:
-                curr_input = generated
-            
-            outputs = inference.model(
-                input_ids=curr_input,
-                past_key_values=past_key_values,
-                use_cache=True,
-            )
-            
-            logits = outputs['logits'][:, -1, :]
-            past_key_values = outputs['past_key_values']
-            
-            # Apply repetition penalty
-            if repetition_penalty != 1.0:
-                for token_id in set(generated[0].tolist()):
-                    logits[0, token_id] /= repetition_penalty
-            
-            # Sample next token
-            next_token = sample_token(
-                logits, temperature, top_p, top_k, do_sample
-            )
-            
-            # Append
-            generated = torch.cat([generated, next_token], dim=1)
-            response_tokens.append(next_token[0, 0].item())
-            
-            # Check for EOS
-            if eos_token_id is not None and next_token[0, 0].item() == eos_token_id:
-                break
-            
-            # Decode and yield tokens
-            full_response = tokenizer.decode(
-                torch.tensor(response_tokens), 
-                skip_special_tokens=True
-            )
-            
-            # Extract assistant's response
-            if "Assistant:" in full_response:
-                assistant_response = full_response.split("Assistant:")[-1]
-            else:
-                assistant_response = full_response
-            
-            # Stream only new text
-            if not hasattr(inference, '_last_streamed_response'):
-                inference._last_streamed_response = ""
-            
-            new_text = assistant_response[len(inference._last_streamed_response):]
-            if new_text:
-                yield json.dumps({"token": new_text, "done": False}) + "\n"
-            
-            inference._last_streamed_response = assistant_response
-        
-        # Reset state
-        if hasattr(inference, '_last_streamed_response'):
-            del inference._last_streamed_response
-        
-        # Signal completion
-        yield json.dumps({"token": "", "done": True}) + "\n"
-    
-    except Exception as e:
-        import traceback
-        error_msg = f"Generation error: {str(e)}"
-        print(f"Error in generate_stream: {error_msg}")
-        traceback.print_exc()
-        yield json.dumps({"error": error_msg, "done": True}) + "\n"
+    finally:
+        _generation_in_progress.clear()
 
+
+# Flask Routes
 
 @app.route('/')
 def index():
@@ -325,182 +299,168 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/api/models', methods=['GET'])
-def get_models():
-    """Get list of available models."""
-    models = list_checkpoints()
+@app.route('/api/checkpoints', methods=['GET'])
+def api_list_checkpoints():
+    """List available checkpoints."""
+    checkpoints = list_checkpoints()
+    default_path = get_default_checkpoint()
+    
     return jsonify({
-        "models": models,
-        "count": len(models)
+        'checkpoints': [
+            {
+                'name': ckpt.name,
+                'path': ckpt.path,
+                'size_mb': round(ckpt.size_mb, 2),
+                'category': ckpt.category,
+            }
+            for ckpt in checkpoints
+        ],
+        'default': default_path,
+        'current': _current_model_name,
     })
 
 
-@app.route('/api/models/status', methods=['GET'])
-def get_model_status():
-    """Get loading status of a model."""
-    model_name = request.args.get('model')
+@app.route('/api/load_model', methods=['POST'])
+def api_load_model():
+    """Load a specific model."""
+    data = request.json
+    checkpoint_path = data.get('checkpoint_path')
     
-    if not model_name:
-        return jsonify({"error": "Model name is required"}), 400
+    if not checkpoint_path:
+        return jsonify({'error': 'No checkpoint path provided'}), 400
     
-    with models_lock:
-        status = model_loading_status.get(model_name, "not_loaded")
-        loaded = model_name in models_cache
+    # Cancel any ongoing generation
+    if _generation_in_progress.is_set():
+        _cancel_generation.set()
+        time.sleep(0.5)
+    
+    try:
+        load_model(checkpoint_path)
+        return jsonify({
+            'success': True,
+            'message': f'Model loaded: {checkpoint_path}',
+            'current': _current_model_name,
+        })
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/model_status', methods=['GET'])
+def api_model_status():
+    """Get current model status."""
     return jsonify({
-        "name": model_name,
-        "status": status,
-        "loaded": loaded
+        'current_model': _current_model_name,
+        'is_generating': _generation_in_progress.is_set(),
+        'cached_models': list(_model_cache.keys()),
     })
+
+
+@app.route('/api/cancel', methods=['POST'])
+def api_cancel():
+    """Cancel ongoing generation."""
+    if _generation_in_progress.is_set():
+        _cancel_generation.set()
+        return jsonify({'success': True, 'message': 'Cancellation requested'})
+    else:
+        return jsonify({'success': False, 'message': 'No generation in progress'})
 
 
 @app.route('/api/generate', methods=['POST'])
-def generate():
-    """Generate text with streaming."""
+def api_generate():
+    """Generate text with streaming response."""
     data = request.json
+    prompt = data.get('prompt', '')
     
-    model_name = data.get('model')
-    message = data.get('message', '')
-    history = data.get('history', [])
+    if not prompt:
+        return jsonify({'error': 'No prompt provided'}), 400
     
-    # Generation parameters
-    max_new_tokens = data.get('max_new_tokens', 512)
+    # Get generation parameters
+    max_new_tokens = data.get('max_new_tokens', 256)
     temperature = data.get('temperature', 0.7)
     top_p = data.get('top_p', 0.9)
     top_k = data.get('top_k', 50)
-    do_sample = data.get('do_sample', True)
     repetition_penalty = data.get('repetition_penalty', 1.1)
     
-    if not model_name:
-        return jsonify({"error": "Model name is required"}), 400
+    # Load model if not loaded
+    checkpoint_path = data.get('checkpoint_path') or _current_model_name or get_default_checkpoint()
     
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
+    if not checkpoint_path:
+        return jsonify({'error': 'No checkpoint available'}), 400
     
     try:
-        # Load model
-        inference = load_model(model_name)
-        
-        # Build conversation prompt
-        prompt_parts = []
-        
-        if history:
-            for turn in history:
-                role = turn.get("role", "user")
-                content = turn.get("content", "")
-                if role == "user":
-                    prompt_parts.append(f"Human: {content}\n\n")
-                else:
-                    prompt_parts.append(f"Assistant: {content}\n\n")
-        
-        prompt_parts.append(f"Human: {message}\n\nAssistant:")
-        full_prompt = "".join(prompt_parts)
-        
-        # Generate unique task ID
-        import uuid
-        task_id = str(uuid.uuid4())
-        
-        # Register task
-        with generation_tasks_lock:
-            generation_tasks[task_id] = False
-        
-        # Stream generation
-        def generate():
-            try:
-                for token in generate_stream(
-                    inference, full_prompt, task_id,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    do_sample=do_sample,
-                    repetition_penalty=repetition_penalty
-                ):
-                    yield token
-            except GeneratorExit:
-                # Generator was closed
-                pass
-            except Exception as e:
-                # Stream the error to the client
-                error_msg = str(e)
-                import traceback
-                traceback.print_exc()
-                yield json.dumps({"error": error_msg, "done": True}) + "\n"
-            finally:
-                # Clean up task
-                with generation_tasks_lock:
-                    if task_id in generation_tasks:
-                        del generation_tasks[task_id]
-        
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'X-Task-ID': task_id
-            }
-        )
-    
+        model_data = load_model(checkpoint_path)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/chat/clear', methods=['POST'])
-def clear_chat():
-    """Clear chat history (no-op for now, handled client-side)."""
-    return jsonify({"success": True})
-
-
-@app.route('/api/generate/cancel', methods=['POST'])
-def cancel_generation():
-    """Cancel an ongoing generation."""
-    data = request.json
-    task_id = data.get('task_id')
+        return jsonify({'error': f'Failed to load model: {e}'}), 500
     
-    if not task_id:
-        return jsonify({"error": "Task ID is required"}), 400
+    def generate():
+        """Generator for SSE streaming."""
+        try:
+            for token in generate_stream(
+                model=model_data['model'],
+                tokenizer=model_data['tokenizer'],
+                device=model_data['device'],
+                prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+            ):
+                if token == "[CANCELLED]":
+                    yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+                    break
+                else:
+                    yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+            
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        
+        except Exception as e:
+            logger.error(f"Generation error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    with generation_tasks_lock:
-        if task_id in generation_tasks:
-            generation_tasks[task_id] = True
-            return jsonify({"success": True, "message": "Generation cancelled"})
-        else:
-            return jsonify({"error": "Task not found"}), 404
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        }
+    )
 
 
-@app.route('/api/models/unload', methods=['POST'])
-def unload_model_endpoint():
-    """Unload a model from memory."""
-    model_name = request.json.get('model') if request.json else request.args.get('model')
+def create_app():
+    """Create and configure the Flask app."""
+    # Create templates and static directories
+    templates_dir = Path(__file__).parent / "templates"
+    static_dir = Path(__file__).parent / "static"
+    templates_dir.mkdir(exist_ok=True)
+    static_dir.mkdir(exist_ok=True)
     
-    if not model_name:
-        return jsonify({"error": "Model name is required"}), 400
-    
-    unload_model(model_name)
-    return jsonify({"success": True, "message": f"Model {model_name} unloaded"})
+    return app
 
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("DeepSeek V3 Web Chat Interface")
-    print("=" * 60)
-    print(f"Server starting at http://localhost:5001")
-    print(f"Project root: {PROJECT_ROOT}")
-    print("=" * 60)
+    logger.info("Starting DeepSeek V3 Web Chat Interface")
+    logger.info(f"Project root: {PROJECT_ROOT}")
     
-    # List available models
-    models = list_checkpoints()
-    print(f"\nAvailable models: {len(models)}")
-    for name, info in list(models.items())[:5]:
-        print(f"  - {name} ({info.get('size_mb', 0)} MB)")
-    if len(models) > 5:
-        print(f"  ... and {len(models) - 5} more")
+    # List available checkpoints
+    checkpoints = list_checkpoints()
+    if checkpoints:
+        logger.info(f"Found {len(checkpoints)} checkpoint(s):")
+        for ckpt in checkpoints:
+            logger.info(f"  - {ckpt.name} ({ckpt.size_mb:.2f} MB) [{ckpt.category}]")
+    else:
+        logger.warning("No checkpoints found in checkpoints/ directory")
     
-    # Create templates directory if not exists
-    templates_dir = Path(__file__).parent / "templates"
-    templates_dir.mkdir(exist_ok=True)
+    # Pre-load default model
+    default_ckpt = get_default_checkpoint()
+    if default_ckpt:
+        logger.info(f"Pre-loading default model: {default_ckpt}")
+        try:
+            load_model(default_ckpt)
+        except Exception as e:
+            logger.error(f"Failed to pre-load model: {e}")
     
-    # Run app
-    app.run(host='0.0.0.0', port=5001, debug=True, threaded=True)
+    # Run server
+    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)

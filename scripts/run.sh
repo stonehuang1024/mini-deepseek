@@ -21,9 +21,10 @@
 #
 
 
-set -e
+#set -e
 
-source ~/.zshrc 2>/dev/null || true
+source ~/.zshrc
+
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +40,8 @@ NC='\033[0m' # No Color
 
 # Default settings
 CONFIG="configs/config_default.yaml"
-DEVICE="auto"
+#DEVICE="auto"
+DEVICE="cpu"
 
 # Print header
 print_header() {
