@@ -20,13 +20,15 @@
 #   ./run.sh full           # Run full pipeline (pretrain -> sft -> rl -> inference)
 #
 
-source ~/.zshrc
 
 set -e
 
+source ~/.zshrc 2>/dev/null || true
+
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -36,7 +38,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default settings
-CONFIG="config_default.yaml"
+CONFIG="configs/config_default.yaml"
 DEVICE="auto"
 
 # Print header
@@ -65,6 +67,7 @@ print_usage() {
     echo "  rl-test       Quick RL test"
     echo "  inference     Run inference demo"
     echo "  chat          Interactive chat mode"
+    echo "  web-chat      Start web chat interface (ChatGPT-style)"
     echo "  tensorboard   Start TensorBoard server"
     echo "  full          Run full pipeline"
     echo "  full-test     Run full pipeline (quick test)"
@@ -110,12 +113,12 @@ check_environment() {
 # Run tests
 run_tests() {
     echo -e "${BLUE}Running all tests...${NC}"
-    python3 test_all.py --test all
+    python3 tests/test_all.py --test all
 }
 
 run_quick_test() {
     echo -e "${BLUE}Running quick model test...${NC}"
-    python3 test_all.py --test model
+    python3 tests/test_all.py --test model
 }
 
 # Pretraining
@@ -163,13 +166,19 @@ run_rl_test() {
 run_inference() {
     local checkpoint="${1:-checkpoints/sft/best.pt}"
     echo -e "${BLUE}Running inference demo...${NC}"
-    python3 inference.py --checkpoint "$checkpoint" --device "$DEVICE"
+    python3 deepseek/inference/inference.py --checkpoint "$checkpoint" --device "$DEVICE"
 }
 
 run_chat() {
     local checkpoint="${1:-checkpoints/sft/best.pt}"
     echo -e "${BLUE}Starting interactive chat...${NC}"
-    python3 inference.py --checkpoint "$checkpoint" --device "$DEVICE" --interactive
+    python3 deepseek/inference/inference.py --checkpoint "$checkpoint" --device "$DEVICE" --interactive
+}
+
+run_web_chat() {
+    echo -e "${BLUE}Starting web chat interface...${NC}"
+    echo -e "${GREEN}Web chat will be available at: http://localhost:5001${NC}"
+    python3 chat/app.py
 }
 
 # TensorBoard
@@ -302,6 +311,10 @@ case "$COMMAND" in
         check_environment
         shift
         run_chat "${CHECKPOINT:-$1}"
+        ;;
+    web-chat)
+        check_environment
+        run_web_chat
         ;;
     tensorboard)
         run_tensorboard

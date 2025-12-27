@@ -34,10 +34,10 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import load_config, DeepSeekV3Config, get_device
-from model import DeepSeekV3Model, print_model_summary, count_parameters
-from dataset import get_tokenizer, create_dataloaders
-from trainer import create_trainer
-from logger import get_logger, set_log_level
+from deepseek.model import DeepSeekV3Model, print_model_summary, count_parameters
+from deepseek.data import get_tokenizer, create_dataloaders
+from deepseek.training import create_trainer
+from deepseek.utils import get_logger, set_log_level
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="config_default.yaml",
+        default="configs/config_default.yaml",
         help="Path to config YAML file",
     )
     

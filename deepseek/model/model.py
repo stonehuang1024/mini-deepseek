@@ -24,13 +24,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from attention import (
+from .attention import (
     MultiHeadLatentAttention,
     StandardAttention,
     RMSNorm,
 )
-from config import ModelConfig, MoEConfig
-from logger import get_logger
+from deepseek.utils import get_logger
+
+# Import config - support both package and standalone usage
+try:
+    from config import ModelConfig, MoEConfig
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from config import ModelConfig, MoEConfig
 
 # Initialize logger
 logger = get_logger(__name__)

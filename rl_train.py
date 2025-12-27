@@ -24,12 +24,11 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import load_config, DeepSeekV3Config, RLConfig, get_device
-from model import DeepSeekV3Model
-from dataset import get_tokenizer
-from rl_dataset import create_rl_dataloaders, DPODataset, GRPODataset, PPODataset
-from rl_trainer_base import DPOTrainer, RuleBasedReward, CompositeReward, LengthReward
-from rl_trainer_algorithms import GRPOTrainer, PPOTrainer
-from logger import get_logger
+from deepseek.model import DeepSeekV3Model
+from deepseek.data import get_tokenizer, create_rl_dataloaders, DPODataset, GRPODataset, PPODataset
+from deepseek.training import DPOTrainer, RuleBasedReward, CompositeReward, LengthReward
+from deepseek.training.rl_trainer_algorithms import GRPOTrainer, PPOTrainer
+from deepseek.utils import get_logger
 
 # Initialize logger
 logger = get_logger(__name__)

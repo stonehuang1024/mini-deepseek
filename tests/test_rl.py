@@ -21,13 +21,13 @@ import time
 from typing import Dict, Any
 
 # Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from config import load_config, DeepSeekV3Config
-from model import DeepSeekV3Model
-from dataset import get_tokenizer
-from logger import get_logger
+from deepseek.model import DeepSeekV3Model
+from deepseek.data import get_tokenizer
+from deepseek.utils import get_logger
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -58,7 +58,7 @@ def test_rl_datasets() -> bool:
     """Test all RL dataset classes."""
     print_header("Testing RL Datasets")
     
-    from rl_dataset import (
+    from deepseek.data import (
         DPODataset, GRPODataset, PPODataset,
         create_rl_dataloaders
     )
@@ -127,7 +127,7 @@ def test_reward_functions() -> bool:
     """Test reward functions."""
     print_header("Testing Reward Functions")
     
-    from rl_trainer_base import (
+    from deepseek.training import (
         RuleBasedReward, LengthReward, CompositeReward
     )
     
@@ -197,8 +197,8 @@ def test_dpo_training(max_steps: int = 10) -> Dict[str, Any]:
     """Test DPO training pipeline."""
     print_header("Testing DPO Training")
     
-    from rl_dataset import create_rl_dataloaders
-    from rl_trainer_base import DPOTrainer
+    from deepseek.data import create_rl_dataloaders
+    from deepseek.training import DPOTrainer
     
     config = load_config()
     config.rl.max_steps = max_steps
@@ -250,9 +250,9 @@ def test_grpo_training(max_steps: int = 5) -> Dict[str, Any]:
     """Test GRPO training pipeline."""
     print_header("Testing GRPO Training")
     
-    from rl_dataset import create_rl_dataloaders
-    from rl_trainer_algorithms import GRPOTrainer
-    from rl_trainer_base import RuleBasedReward
+    from deepseek.data import create_rl_dataloaders
+    from deepseek.training.rl_trainer_algorithms import GRPOTrainer
+    from deepseek.training import RuleBasedReward
     
     config = load_config()
     config.rl.max_steps = max_steps
@@ -306,9 +306,9 @@ def test_ppo_training(max_steps: int = 5) -> Dict[str, Any]:
     """Test PPO training pipeline."""
     print_header("Testing PPO Training")
     
-    from rl_dataset import create_rl_dataloaders
-    from rl_trainer_algorithms import PPOTrainer
-    from rl_trainer_base import RuleBasedReward
+    from deepseek.data import create_rl_dataloaders
+    from deepseek.training.rl_trainer_algorithms import PPOTrainer
+    from deepseek.training import RuleBasedReward
     
     config = load_config()
     config.rl.max_steps = max_steps
@@ -362,10 +362,8 @@ def test_full_rl_pipeline() -> Dict[str, Any]:
     """Test complete RL pipeline: Pretrain -> SFT -> RL."""
     print_header("Testing Full RL Pipeline")
     
-    from rl_dataset import create_rl_dataloaders
-    from rl_trainer_base import DPOTrainer
-    from dataset import create_dataloaders
-    from trainer import PretrainTrainer, SFTTrainer
+    from deepseek.data import create_rl_dataloaders, create_dataloaders
+    from deepseek.training import DPOTrainer, PretrainTrainer, SFTTrainer
     
     results = {}
     

@@ -96,7 +96,7 @@ Output = softmax(QK^T / √d_h) · V
 
 #### 代码位置
 
-- 实现: [attention.py](attention.py) - `MultiHeadLatentAttention` 类
+- 实现: [attention.py](deepseek/model/attention.py) - `MultiHeadLatentAttention` 类
 
 ---
 
@@ -147,7 +147,7 @@ L_aux = α × N × Σ(f_i × P_i)
 
 #### 代码位置
 
-- 实现: [model.py](model.py) - `DeepSeekMoE`, `MoEGate`, `Expert` 类
+- 实现: [model.py](deepseek/model/model.py) - `DeepSeekMoE`, `MoEGate`, `Expert` 类
 
 ---
 
@@ -181,34 +181,48 @@ total_loss = lm_loss + mtp_weight × mtp_loss
 
 #### 代码位置
 
-- 实现: [model.py](model.py) - `MTPHead` 类
+- 实现: [model.py](deepseek/model/model.py) - `MTPHead` 类
 
 ---
 
 ## 3. 项目结构
 
 ```
-deepseek_v3/
-├── config.py               # 配置管理 (所有配置类定义)
-├── config_default.yaml     # 默认配置 (小数据集)
-├── config_large.yaml       # 大规模训练配置
-├── attention.py            # MLA 注意力实现
-├── model.py                # DeepSeek V3 模型主体
-├── dataset.py              # 数据集处理 (Pretrain/SFT/RL)
-├── rl_dataset.py           # RL 专用数据集
-├── trainer.py              # 训练器 (Pretrain/SFT/GRPO)
-├── rl_trainer_base.py      # RL 训练基类
-├── rl_trainer_algorithms.py # RL 算法实现 (GRPO/PPO)
-├── train.py                # 训练入口脚本
-├── rl_train.py             # RL 训练入口
-├── inference.py            # 推理和生成
-├── logger.py               # 日志模块 (彩色输出、多级别日志)
-├── run.sh                  # 便捷运行脚本
-├── run_pretrain.sh         # 预训练专用脚本
-├── test_all.py             # 测试套件
-├── test_rl.py              # RL 测试
-├── requirements.txt        # Python 依赖
-└── README.md               # 项目说明
+mini-deepseek/
+├── deepseek/                    # 核心包目录
+│   ├── __init__.py             # 包导出
+│   ├── model/                   # 模型模块
+│   │   ├── __init__.py
+│   │   ├── attention.py        # MLA 注意力实现
+│   │   └── model.py            # DeepSeek V3 模型主体
+│   ├── data/                    # 数据模块
+│   │   ├── __init__.py
+│   │   ├── dataset.py          # 数据集处理 (Pretrain/SFT/RL)
+│   │   └── rl_dataset.py       # RL 专用数据集
+│   ├── training/                # 训练模块
+│   │   ├── __init__.py
+│   │   ├── trainer.py          # 训练器 (Pretrain/SFT/GRPO)
+│   │   ├── rl_trainer_base.py  # RL 训练基类
+│   │   └── rl_trainer_algorithms.py  # RL 算法实现 (GRPO/PPO)
+│   └── utils/                   # 工具模块
+│       ├── __init__.py
+│       └── logger.py           # 日志模块 (彩色输出、多级别日志)
+├── configs/                     # 配置文件目录
+│   ├── config_default.yaml     # 默认配置 (小数据集)
+│   └── config_large.yaml       # 大规模训练配置
+├── scripts/                     # 脚本目录
+│   ├── run.sh                  # 便捷运行脚本
+│   └── run_pretrain.sh         # 预训练专用脚本
+├── tests/                       # 测试目录
+│   ├── __init__.py
+│   ├── test_all.py             # 测试套件
+│   └── test_rl.py              # RL 测试
+├── config.py                    # 配置管理 (所有配置类定义)
+├── train.py                     # 训练入口脚本
+├── rl_train.py                  # RL 训练入口
+├── inference.py                 # 推理和生成
+├── requirements.txt             # Python 依赖
+└── README.md                    # 项目说明
 ```
 
 ### 3.1 日志模块 (logger.py)

@@ -17,25 +17,8 @@ Usage:
     model = DeepSeekV3Model(config.model)
 """
 
-# Import from config module (root level)
-from config import (
-    DeepSeekV3Config,
-    ModelConfig,
-    TrainingConfig,
-    SFTConfig,
-    RLConfig,
-    DataConfig,
-    VisualizationConfig,
-    InferenceConfig,
-    MoEConfig,
-    MTPConfig,
-    load_config,
-    get_device,
-)
-
-# Re-export from new package structure
-from deepseek import (
-    # Model
+# Model components
+from .model import (
     DeepSeekV3Model,
     TransformerBlock,
     DeepSeekMoE,
@@ -44,13 +27,15 @@ from deepseek import (
     SwiGLU,
     count_parameters,
     print_model_summary,
-    # Attention
     MultiHeadLatentAttention,
     StandardAttention,
     RotaryEmbedding,
     RMSNorm,
     apply_rotary_pos_emb,
-    # Dataset
+)
+
+# Data components
+from .data import (
     get_tokenizer,
     create_dataloaders,
     PretrainDataset,
@@ -60,7 +45,10 @@ from deepseek import (
     DPODataset,
     GRPODataset,
     PPODataset,
-    # Trainer
+)
+
+# Training components
+from .training import (
     BaseTrainer,
     PretrainTrainer,
     SFTTrainer,
@@ -72,7 +60,10 @@ from deepseek import (
     RuleBasedReward,
     CompositeReward,
     LengthReward,
-    # Logger
+)
+
+# Utils
+from .utils import (
     get_logger,
     set_log_level,
     setup_file_logging,
@@ -84,29 +75,10 @@ from deepseek import (
     ColoredFormatter,
 )
 
-# Import inference separately (it's at root level)
-from deepseek.inference.inference import (
-    DeepSeekInference,
-    load_model_for_inference,
-)
-
 __version__ = "0.1.0"
 __author__ = "DeepSeek V3 Learning Project"
 
 __all__ = [
-    # Config
-    "DeepSeekV3Config",
-    "ModelConfig",
-    "TrainingConfig",
-    "SFTConfig",
-    "RLConfig",
-    "DataConfig",
-    "VisualizationConfig",
-    "InferenceConfig",
-    "MoEConfig",
-    "MTPConfig",
-    "load_config",
-    "get_device",
     # Model
     "DeepSeekV3Model",
     "TransformerBlock",
@@ -144,9 +116,6 @@ __all__ = [
     "RuleBasedReward",
     "CompositeReward",
     "LengthReward",
-    # Inference
-    "DeepSeekInference",
-    "load_model_for_inference",
     # Logger
     "get_logger",
     "set_log_level",

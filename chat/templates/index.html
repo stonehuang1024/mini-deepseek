@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek V3 Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #343541;
+            color: #ececf1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            background: #202123;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #4d4d4f;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #ececf1;
+        }
+
+        .model-selector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .model-selector select {
+            background: #40414f;
+            border: 1px solid #565869;
+            color: #ececf1;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            min-width: 200px;
+        }
+
+        .model-selector select:hover {
+            border-color: #6b6b7b;
+        }
+
+        .model-selector select:focus {
+            outline: none;
+            border-color: #10a37f;
+        }
+
+        /* Main chat area */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .message {
+            display: flex;
+            gap: 16px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .message.user .message-avatar {
+            background: #5436da;
+        }
+
+        .message.assistant .message-avatar {
+            background: #10a37f;
+        }
+
+        .message-content {
+            flex: 1;
+            line-height: 1.6;
+            word-wrap: break-word;
+        }
+
+        .message-content p {
+            margin-bottom: 12px;
+        }
+
+        .message-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Loading indicator */
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .loading-dots span {
+            width: 8px;
+            height: 8px;
+            background: #8e8ea0;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dots span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .loading-dots span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        /* Input area */
+        .input-container {
+            background: #40414f;
+            padding: 24px;
+            border-top: 1px solid #4d4d4f;
+        }
+
+        .input-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .input-textarea {
+            width: 100%;
+            background: transparent;
+            border: 1px solid #565869;
+            border-radius: 12px;
+            padding: 16px 48px 16px 16px;
+            color: #ececf1;
+            font-size: 16px;
+            font-family: inherit;
+            resize: none;
+            min-height: 52px;
+            max-height: 200px;
+            line-height: 1.5;
+        }
+
+        .input-textarea::placeholder {
+            color: #8e8ea0;
+        }
+
+        .input-textarea:focus {
+            outline: none;
+            border-color: #10a37f;
+        }
+
+        .send-button {
+            position: absolute;
+            right: 56px;
+            bottom: 12px;
+            background: transparent;
+            border: none;
+            color: #8e8ea0;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .send-button:hover:not(:disabled) {
+            background: #2a2b32;
+            color: #ececf1;
+        }
+
+        .send-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .send-button.active {
+            color: #10a37f;
+        }
+
+        .cancel-button {
+            position: absolute;
+            right: 12px;
+            bottom: 12px;
+            background: transparent;
+            border: none;
+            color: #8e8ea0;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            display: none;
+        }
+
+        .cancel-button:hover {
+            background: #2a2b32;
+            color: #ef4444;
+        }
+
+        .cancel-button.active {
+            display: block;
+        }
+
+        .cancel-button:active {
+            transform: scale(0.95);
+        }
+
+        /* Loading overlay for model switch */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .loading-overlay.show {
+            display: flex;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #10a37f;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #ececf1;
+            font-size: 16px;
+        }
+
+        /* Scrollbar styling */
+        .chat-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #565869;
+            border-radius: 4px;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #6b6b7b;
+        }
+
+        /* Error message */
+        .error-message {
+            background: #ef4444;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        /* Empty state */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 48px;
+        }
+
+        .empty-state h2 {
+            font-size: 32px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #ececf1;
+        }
+
+        .empty-state p {
+            color: #8e8ea0;
+            font-size: 16px;
+        }
+
+        /* Clear chat button */
+        .clear-button {
+            background: transparent;
+            border: 1px solid #565869;
+            color: #ececf1;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .clear-button:hover {
+            background: #2a2b32;
+            border-color: #6b6b7b;
+        }
+
+        .clear-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>DeepSeek V3 Chat</h1>
+        <div class="model-selector">
+            <button class="clear-button" id="clearChatBtn" disabled>Clear Chat</button>
+            <select id="modelSelect">
+                <option value="" disabled selected>Loading models...</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="chat-container">
+        <div class="error-message" id="errorMessage"></div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div class="empty-state" id="emptyState">
+                <h2>DeepSeek V3</h2>
+                <p>Select a model and start chatting</p>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <div class="input-wrapper">
+                <textarea 
+                    class="input-textarea" 
+                    id="messageInput" 
+                    placeholder="Send a message..."
+                    rows="1"
+                ></textarea>
+                <button class="send-button" id="sendBtn" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+                <button class="cancel-button" id="cancelBtn" title="Stop generation">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loadingText">Loading model...</div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const modelSelect = document.getElementById('modelSelect');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingText = document.getElementById('loadingText');
+        const errorMessage = document.getElementById('errorMessage');
+        const emptyState = document.getElementById('emptyState');
+        const clearChatBtn = document.getElementById('clearChatBtn');
+
+        let conversationHistory = [];
+        let isGenerating = false;
+        let currentModel = null;
+        let abortController = null;
+        let currentTaskId = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadModels();
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            // Send button click
+            sendBtn.addEventListener('click', sendMessage);
+
+            // Cancel button click
+            cancelBtn.addEventListener('click', cancelGeneration);
+
+            // Enter key to send
+            messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+
+            // Auto-resize textarea
+            messageInput.addEventListener('input', () => {
+                messageInput.style.height = 'auto';
+                messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
+                updateSendButton();
+            });
+
+            // Model change
+            modelSelect.addEventListener('change', (e) => {
+                const model = e.target.value;
+                if (model && model !== currentModel) {
+                    switchModel(model);
+                }
+            });
+
+            // Clear chat
+            clearChatBtn.addEventListener('click', clearChat);
+        }
+
+        function updateSendButton() {
+            sendBtn.disabled = !messageInput.value.trim() || isGenerating || !currentModel;
+            if (messageInput.value.trim() && currentModel && !isGenerating) {
+                sendBtn.classList.add('active');
+            } else {
+                sendBtn.classList.remove('active');
+            }
+            
+            // Show/hide cancel button
+            if (isGenerating) {
+                cancelBtn.classList.add('active');
+            } else {
+                cancelBtn.classList.remove('active');
+            }
+        }
+
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+
+                modelSelect.innerHTML = '';
+                
+                if (data.models && Object.keys(data.models).length > 0) {
+                    // Sort models by type then by name
+                    const sortedModels = Object.entries(data.models).sort((a, b) => {
+                        const typeA = a[1].type || 'unknown';
+                        const typeB = b[1].type || 'unknown';
+                        if (typeA !== typeB) return typeA.localeCompare(typeB);
+                        return a[0].localeCompare(b[0]);
+                    });
+
+                    let currentType = null;
+                    let firstPretrainModel = null;
+
+                    sortedModels.forEach(([name, info]) => {
+                        // Add type separator
+                        if (info.type !== currentType) {
+                            currentType = info.type;
+                            const separator = document.createElement('option');
+                            separator.value = '';
+                            separator.text = `--- ${info.type} ---`;
+                            separator.disabled = true;
+                            modelSelect.appendChild(separator);
+                        }
+
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.text = `${name} (${info.size_mb} MB)`;
+                        modelSelect.appendChild(option);
+
+                        // Track first pretrain model for auto-selection
+                        if (!firstPretrainModel && info.type === 'Pretrained') {
+                            firstPretrainModel = name;
+                        }
+                    });
+
+                    // Auto-select first pretrain model
+                    if (firstPretrainModel) {
+                        modelSelect.value = firstPretrainModel;
+                        currentModel = firstPretrainModel;
+                        updateSendButton();
+                        console.log('Auto-selected model:', firstPretrainModel);
+                    }
+                } else {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.text = 'No models found';
+                    option.disabled = true;
+                    modelSelect.appendChild(option);
+                }
+            } catch (error) {
+                showError('Failed to load models: ' + error.message);
+                console.error('Load models error:', error);
+            }
+        }
+
+        async function switchModel(modelName) {
+            showLoading('Switching model...');
+            
+            try {
+                // Wait a moment to check model status
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Check if model is loaded
+                const statusResponse = await fetch(`/api/models/status?model=${encodeURIComponent(modelName)}`);
+                const status = await statusResponse.json();
+
+                if (status.status === 'loading') {
+                    // Wait for loading
+                    await pollModelStatus(modelName);
+                }
+
+                currentModel = modelName;
+                hideLoading();
+                updateSendButton();
+                
+                // Show success message
+                const modelInfo = modelName.split('/').pop();
+                addSystemMessage(`Model switched to: ${modelInfo}`);
+            } catch (error) {
+                hideLoading();
+                showError('Failed to switch model: ' + error.message);
+                modelSelect.value = currentModel || '';
+            }
+        }
+
+        async function pollModelStatus(modelName, maxAttempts = 60) {
+            for (let i = 0; i < maxAttempts; i++) {
+                const response = await fetch(`/api/models/status?model=${encodeURIComponent(modelName)}`);
+                const data = await response.json();
+                
+                if (data.status === 'loaded') {
+                    return true;
+                }
+                if (data.status === 'error') {
+                    throw new Error('Model loading failed');
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            throw new Error('Model loading timeout');
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isGenerating || !currentModel) {
+                return;
+            }
+
+            // Add user message
+            addMessage('user', message);
+            conversationHistory.push({ role: 'user', content: message });
+
+            // Clear input
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            isGenerating = true;
+            
+            // Create new AbortController for this request
+            abortController = new AbortController();
+            
+            updateSendButton();
+
+            // Create assistant message placeholder
+            const assistantMessageDiv = createMessageElement('assistant', '');
+            chatMessages.appendChild(assistantMessageDiv);
+            const contentDiv = assistantMessageDiv.querySelector('.message-content');
+            
+            // Show loading indicator
+            contentDiv.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+
+            let fullResponse = ''; // Declare outside try block to access in catch
+
+            try {
+                // Stream response
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: currentModel,
+                        message: message,
+                        history: conversationHistory,
+                        max_new_tokens: 512,
+                        temperature: 0.7,
+                        top_p: 0.9,
+                        do_sample: true
+                    }),
+                    signal: abortController.signal
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to generate response');
+                }
+
+                // Get task ID from response headers
+                currentTaskId = response.headers.get('X-Task-ID');
+
+                // Clear loading indicator
+                contentDiv.innerHTML = '';
+
+                // Read stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.error) {
+                                    throw new Error(data.error);
+                                }
+                                
+                                if (data.token) {
+                                    fullResponse += data.token;
+                                    contentDiv.textContent = fullResponse;
+                                    scrollToBottom();
+                                }
+                                
+                                if (data.done) {
+                                    break;
+                                }
+                            } catch (parseError) {
+                                console.error('Error parsing stream data:', parseError);
+                            }
+                        }
+                    }
+                }
+
+                // Add assistant message to history
+                conversationHistory.push({ role: 'assistant', content: fullResponse });
+
+            } catch (error) {
+                // Check if request was aborted
+                if (error.name === 'AbortError') {
+                    contentDiv.innerHTML += '<br><span style="color: #8e8ea0; font-size: 14px;">[Generation cancelled]</span>';
+                    
+                    // Add partial response to history if any
+                    if (fullResponse) {
+                        conversationHistory.push({ role: 'assistant', content: fullResponse });
+                    }
+                } else {
+                    contentDiv.textContent = `Error: ${error.message}`;
+                    showError('Failed to generate response: ' + error.message);
+                }
+            }
+
+            isGenerating = false;
+            abortController = null;
+            currentTaskId = null;
+            updateSendButton();
+        }
+
+        async function cancelGeneration() {
+            if (!currentTaskId) {
+                return;
+            }
+            
+            try {
+                // Cancel the fetch request
+                if (abortController) {
+                    abortController.abort();
+                }
+                
+                // Also notify the backend to stop generation
+                await fetch('/api/generate/cancel', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        task_id: currentTaskId
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to cancel generation:', error);
+            }
+        }
+
+        function addMessage(role, content) {
+            const messageDiv = createMessageElement(role, content);
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+            
+            if (emptyState) {
+                emptyState.style.display = 'none';
+            }
+            
+            clearChatBtn.disabled = false;
+        }
+
+        function createMessageElement(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = role === 'user' ? 'U' : 'AI';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(contentDiv);
+
+            return messageDiv;
+        }
+
+        function addSystemMessage(text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.style.cssText = `
+                text-align: center;
+                color: #8e8ea0;
+                font-size: 14px;
+                padding: 8px;
+            `;
+            messageDiv.textContent = text;
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function clearChat() {
+            if (!confirm('Clear all messages?')) {
+                return;
+            }
+            
+            conversationHistory = [];
+            chatMessages.innerHTML = '';
+            emptyState.style.display = 'flex';
+            chatMessages.appendChild(emptyState);
+            clearChatBtn.disabled = true;
+        }
+
+        function showLoading(text) {
+            loadingText.textContent = text;
+            loadingOverlay.classList.add('show');
+        }
+
+        function hideLoading() {
+            loadingOverlay.classList.remove('show');
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('show');
+            setTimeout(() => {
+                errorMessage.classList.remove('show');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

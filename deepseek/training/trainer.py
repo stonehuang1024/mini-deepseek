@@ -29,12 +29,23 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
-from config import (
-    DeepSeekV3Config, TrainingConfig, SFTConfig, RLConfig,
-    VisualizationConfig, get_device,
-)
-from model import DeepSeekV3Model
-from logger import get_logger
+from deepseek.model import DeepSeekV3Model
+from deepseek.utils import get_logger
+
+# Import config - support both package and standalone usage
+try:
+    from config import (
+        DeepSeekV3Config, TrainingConfig, SFTConfig, RLConfig,
+        VisualizationConfig, get_device,
+    )
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from config import (
+        DeepSeekV3Config, TrainingConfig, SFTConfig, RLConfig,
+        VisualizationConfig, get_device,
+    )
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -817,7 +828,8 @@ class BaseTrainer:
             num_batches += 1
             total_tokens += batch['input_ids'].numel()
             
-            if num_batches >= self.config.eval_samples // self.config.batch_size:
+            # Always process at least one batch, then check limit if eval_samples > 0
+            if self.config.eval_samples > 0 and num_batches >= self.config.eval_samples // self.config.batch_size:
                 break
         
         avg_loss = total_loss / max(1, num_batches)

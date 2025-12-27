@@ -13,10 +13,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from config import RLConfig, VisualizationConfig
-from model import DeepSeekV3Model
-from rl_trainer_base import BaseRLTrainer, RewardFunction, RuleBasedReward
-from logger import get_logger
+from deepseek.model import DeepSeekV3Model
+from deepseek.utils import get_logger
+from .rl_trainer_base import BaseRLTrainer, RewardFunction, RuleBasedReward
+
+# Import config - support both package and standalone usage
+try:
+    from config import RLConfig, VisualizationConfig
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from config import RLConfig, VisualizationConfig
 
 # Initialize logger
 logger = get_logger(__name__)

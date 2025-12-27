@@ -12,12 +12,19 @@ Key Components:
 """
 
 import os
+import sys
 import yaml
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict, Any, Union
 from pathlib import Path
 
-from logger import get_logger
+# Import logger - support both package and standalone usage
+try:
+    from deepseek.utils.logger import get_logger
+except ImportError:
+    # Fallback to direct import when used standalone
+    sys.path.insert(0, str(Path(__file__).parent / "deepseek" / "utils"))
+    from logger import get_logger
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -379,6 +386,7 @@ class InferenceConfig:
     do_sample: bool = True
     repetition_penalty: float = 1.1
     use_mtp_decoding: bool = True
+    stream: bool = True
     batch_size: int = 4
     device: str = "auto"
 

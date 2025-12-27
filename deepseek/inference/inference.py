@@ -23,12 +23,13 @@ from typing import Optional, List, Dict, Any
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from config import load_config, InferenceConfig, get_device
-from model import DeepSeekV3Model
-from dataset import get_tokenizer
-from logger import get_logger
+from deepseek.model import DeepSeekV3Model
+from deepseek.data import get_tokenizer
+from deepseek.utils import get_logger
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -82,6 +83,7 @@ class DeepSeekInference:
         do_sample: Optional[bool] = None,
         repetition_penalty: Optional[float] = None,
         use_mtp: Optional[bool] = None,
+        stream: Optional[bool] = None,
     ) -> str:
         """
         Generate text from prompt.
@@ -95,6 +97,7 @@ class DeepSeekInference:
             do_sample: Whether to sample (vs greedy)
             repetition_penalty: Penalty for repeating tokens
             use_mtp: Use MTP speculative decoding
+            stream: Stream tokens as they are generated
             
         Returns:
             Generated text
@@ -107,36 +110,76 @@ class DeepSeekInference:
         do_sample = do_sample if do_sample is not None else self.config.do_sample
         repetition_penalty = repetition_penalty or self.config.repetition_penalty
         use_mtp = use_mtp if use_mtp is not None else self.config.use_mtp_decoding
+        stream = stream if stream is not None else self.config.stream
         
         # Tokenize prompt
         input_ids = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
         
         # Generate
         if use_mtp and self.model.mtp_enabled:
-            output_ids = self._generate_with_mtp(
-                input_ids,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=do_sample,
-                repetition_penalty=repetition_penalty,
-            )
+            if stream:
+                output_gen = self._generate_with_mtp(
+                    input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    do_sample=do_sample,
+                    repetition_penalty=repetition_penalty,
+                    stream=True,
+                )
+                # Collect streamed tokens
+                generated_text = ""
+                for token in output_gen:
+                    if token is not None:
+                        generated_text += token
+                return generated_text
+            else:
+                output_ids = self._generate_with_mtp(
+                    input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    do_sample=do_sample,
+                    repetition_penalty=repetition_penalty,
+                    stream=False,
+                )
+                # Decode
+                generated_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+                return generated_text
         else:
-            output_ids = self._generate_standard(
-                input_ids,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=do_sample,
-                repetition_penalty=repetition_penalty,
-            )
-        
-        # Decode
-        generated_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
-        
-        return generated_text
+            if stream:
+                output_gen = self._generate_standard(
+                    input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    do_sample=do_sample,
+                    repetition_penalty=repetition_penalty,
+                    stream=True,
+                )
+                # Collect streamed tokens
+                generated_text = ""
+                for token in output_gen:
+                    if token is not None:
+                        generated_text += token
+                return generated_text
+            else:
+                output_ids = self._generate_standard(
+                    input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    do_sample=do_sample,
+                    repetition_penalty=repetition_penalty,
+                    stream=False,
+                )
+                # Decode
+                generated_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+                return generated_text
     
     def _generate_standard(
         self,
@@ -147,6 +190,7 @@ class DeepSeekInference:
         top_k: int,
         do_sample: bool,
         repetition_penalty: float,
+        stream: bool = False,
     ) -> torch.Tensor:
         """Standard autoregressive generation."""
         generated = input_ids
@@ -174,19 +218,25 @@ class DeepSeekInference:
                     logits[0, token_id] /= repetition_penalty
             
             # Sample next token
-            next_token = self._sample_token(
-                logits, temperature, top_p, top_k, do_sample
-            )
+            next_token = self._sample_token(logits, temperature, top_p, top_k, do_sample)
             
             # Append
             generated = torch.cat([generated, next_token], dim=1)
             
             # Check for EOS
             if next_token[0, 0].item() == self.eos_token_id:
+                if stream:
+                    yield None  # Signal end of generation
                 break
+            
+            # Stream token if requested
+            if stream:
+                token_text = self.tokenizer.decode(next_token[0], skip_special_tokens=False)
+                if token_text:
+                    yield token_text
         
-        return generated
-    
+        if not stream:
+            return generated    
     def _generate_with_mtp(
         self,
         input_ids: torch.Tensor,
@@ -196,6 +246,7 @@ class DeepSeekInference:
         top_k: int,
         do_sample: bool,
         repetition_penalty: float,
+        stream: bool = False,
     ) -> torch.Tensor:
         """
         Generation with MTP speculative decoding.
@@ -243,10 +294,20 @@ class DeepSeekInference:
                 generated = torch.cat([generated, token], dim=1)
                 num_generated += 1
                 
+                # Stream token if requested
+                if stream:
+                    token_text = self.tokenizer.decode(token[0], skip_special_tokens=False)
+                    if token_text:
+                        yield token_text
+                
                 if token[0, 0].item() == self.eos_token_id:
+                    if stream:
+                        yield None  # Signal end of generation
                     return generated
                 
                 if num_generated >= max_new_tokens:
+                    if stream:
+                        yield None
                     break
             
             # Reset cache after speculative tokens (simplified)
@@ -365,7 +426,7 @@ class DeepSeekInference:
         return response
     
     def interactive_chat(self, system_prompt: Optional[str] = None):
-        """Run interactive chat session."""
+        """Run interactive chat session with streaming output."""
         print("\n" + "=" * 70)
         print("DeepSeek V3 Interactive Chat")
         print("Type 'quit' or 'exit' to end the session")
@@ -393,14 +454,108 @@ class DeepSeekInference:
                 print("Conversation history cleared.\n")
                 continue
             
-            # Generate response
-            response = self.chat(
-                user_message=user_input,
-                history=history,
-                system_prompt=system_prompt,
-            )
+            # Build conversation prompt
+            prompt_parts = []
             
-            print(f"Assistant: {response}\n")
+            if system_prompt:
+                prompt_parts.append(f"System: {system_prompt}\n\n")
+            
+            if history:
+                for turn in history:
+                    role = turn.get("role", "user")
+                    content = turn.get("content", "")
+                    if role == "user":
+                        prompt_parts.append(f"Human: {content}\n\n")
+                    else:
+                        prompt_parts.append(f"Assistant: {content}\n\n")
+            
+            prompt_parts.append(f"Human: {user_input}\n\nAssistant:")
+            
+            full_prompt = "".join(prompt_parts)
+            
+            # Stream generation output
+            print("Assistant: ", end="", flush=True)
+            
+            # Tokenize prompt
+            input_ids = self.tokenizer.encode(full_prompt, return_tensors='pt').to(self.device)
+            
+            # Stream generate
+            response_tokens = []
+            generated = input_ids
+            past_key_values = None
+            
+            max_new_tokens = self.config.max_new_tokens
+            temperature = self.config.temperature
+            top_p = self.config.top_p
+            top_k = self.config.top_k
+            do_sample = self.config.do_sample
+            repetition_penalty = self.config.repetition_penalty
+            
+            for step in range(max_new_tokens):
+                # Forward pass
+                if past_key_values is not None:
+                    curr_input = generated[:, -1:]
+                else:
+                    curr_input = generated
+                
+                outputs = self.model(
+                    input_ids=curr_input,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+                
+                logits = outputs['logits'][:, -1, :]  # (B, V)
+                past_key_values = outputs['past_key_values']
+                
+                # Apply repetition penalty
+                if repetition_penalty != 1.0:
+                    for token_id in set(generated[0].tolist()):
+                        logits[0, token_id] /= repetition_penalty
+                
+                # Sample next token
+                next_token = self._sample_token(logits, temperature, top_p, top_k, do_sample)
+                
+                # Append
+                generated = torch.cat([generated, next_token], dim=1)
+                response_tokens.append(next_token[0, 0].item())
+                
+                # Check for EOS
+                if next_token[0, 0].item() == self.eos_token_id:
+                    break
+                
+                # Decode and print the latest token
+                # To properly handle multi-token words, we decode all response tokens so far
+                full_response = self.tokenizer.decode(torch.tensor(response_tokens), skip_special_tokens=True)
+                
+                # Extract assistant's response
+                if "Assistant:" in full_response:
+                    assistant_response = full_response.split("Assistant:")[-1]
+                else:
+                    assistant_response = full_response
+                
+                # Print only the new part since last iteration
+                if not hasattr(self, '_last_printed_response'):
+                    self._last_printed_response = ""
+                
+                new_text = assistant_response[len(self._last_printed_response):]
+                if new_text:
+                    print(new_text, end="", flush=True)
+                
+                self._last_printed_response = assistant_response
+            
+            print("\n")
+            
+            # Reset last printed response
+            self._last_printed_response = ""
+            
+            # Get final response for history
+            full_response = self.tokenizer.decode(torch.tensor(response_tokens), skip_special_tokens=True)
+            
+            # Extract assistant's response
+            if "Assistant:" in full_response:
+                response = full_response.split("Assistant:")[-1].strip()
+            else:
+                response = full_response
             
             # Update history
             history.append({"role": "user", "content": user_input})
@@ -425,7 +580,7 @@ def load_model_for_inference(
     if config_path and os.path.exists(config_path):
         config = load_config(config_path)
     else:
-        config_path = Path(checkpoint_path).parent.parent / "config_default.yaml"
+        config_path = Path(checkpoint_path).parent.parent / "configs" / "config_default.yaml"
         if config_path.exists():
             config = load_config(str(config_path))
         else:

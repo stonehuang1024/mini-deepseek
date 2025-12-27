@@ -8,6 +8,9 @@ transformers>=4.30.0
 datasets>=2.14.0
 tokenizers>=0.13.0
 
+# Web interface
+flask>=3.0.0
+
 # Training utilities
 tensorboard>=2.13.0
 tqdm>=4.65.0
