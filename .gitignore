@@ -1,0 +1,228 @@
+# ====================================
+# OS Generated Files
+# ====================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ====================================
+# IDE and Editor Files
+# ====================================
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs (PyCharm, CLion, GoLand, etc.)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ====================================
+# Python
+# ====================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.env
+.venv/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# MyPy
+.mypy_cache/
+
+# ====================================
+# C/C++
+# ====================================
+# Compiled Object files
+*.o
+*.obj
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects
+*.dll
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# ====================================
+# Go
+# ====================================
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# ====================================
+# Bazel
+# ====================================
+bazel-*
+.bazelrc.user
+
+# ====================================
+# TensorFlow / Machine Learning
+# ====================================
+# Model checkpoints
+*.ckpt
+*.ckpt.*
+*.pt
+checkpoint/
+checkpoints/
+
+# TensorBoard logs
+logs/
+events.out.tfevents.*
+log/
+
+# TFRecords (large data files)
+*.tfrecords
+
+# SavedModel
+saved_model/
+
+# Model files
+*.pb
+*.pbtxt
+*.h5
+*.hdf5
+
+# Numpy files
+*.npy
+*.npz
+
+# ====================================
+# Data and Large Files
+# ====================================
+# Compressed files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Data files
+*.csv
+*.parquet
+*.avro
+data/
+dataset/
+
+# Sample data (if large)
+*.sample
+
+# ====================================
+# Logs and Temporary Files
+# ====================================
+*.log
+*.tmp
+*.TMP
+*.temp
+*.bak
+logs/
+tmp/
+
+# ====================================
+# Credentials and Secrets
+# ====================================
+*.pem
+*.key
+*secret*
+*password*
+psPassword.txt
+
+# ====================================
+# Docker
+# ====================================
+docker-compose.override.yml
+
+# ====================================
+# Misc
+# ====================================
+# Local configuration files
+*.local
+.env.local
+.env.*.local
+
+# Coverage reports
+coverage/
+*.gcov
+*.gcda
+*.gcno
