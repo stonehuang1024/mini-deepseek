@@ -1,0 +1,34 @@
+# DeepSeek V3 Learning Implementation
+# ====================================
+# Requirements for training and inference
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.30.0
+datasets>=2.14.0
+tokenizers>=0.13.0
+
+# Training utilities
+tensorboard>=2.13.0
+tqdm>=4.65.0
+
+# Configuration
+pyyaml>=6.0
+dataclasses
+
+# Numerical computing
+numpy>=1.24.0
+
+# Optional: for faster data loading
+# accelerate>=0.20.0
+
+# Optional: for distributed training
+# deepspeed>=0.10.0
+
+# Optional: for LoRA fine-tuning
+# peft>=0.4.0
+
+# Development (optional)
+# pytest>=7.0.0
+# black>=23.0.0
+# isort>=5.12.0

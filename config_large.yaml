@@ -1,0 +1,273 @@
+# DeepSeek V3 Configuration for Large Scale Pretraining
+# Uses OpenWebText dataset (~10GB subset)
+# Optimized for training on GPU with 10GB+ VRAM
+
+experiment_name: deepseek_v3_pretrain_large
+
+# ==================== Model Architecture ====================
+model:
+  # Basic dimensions - Larger model for better learning
+  vocab_size: 50257              # GPT-2 tokenizer vocab size
+  hidden_size: 256               # D: model hidden dimension (d_model)
+  max_position_embeddings: 512   # Maximum sequence length
+  num_hidden_layers: 6           # Number of transformer blocks
+  
+  # Multi-head Latent Attention (MLA)
+  num_attention_heads: 4         # H: number of query heads (n_heads)
+  head_dim: 64                   # d_h: dimension per head
+  kv_lora_rank: 64               # d_c: compressed KV dimension
+  q_lora_rank: 128               # d_c': compressed Q dimension
+  qk_nope_head_dim: 32           # d_h^nope: non-positional embedding dim per head
+  qk_rope_head_dim: 32           # d_h^rope: rotary positional embedding dim per head
+  v_head_dim: 64                 # d_h^v: value head dimension
+  
+  # RoPE
+  rope_theta: 10000.0
+  rope_scaling: null
+  
+  # DeepSeekMoE Configuration
+  moe:
+    enabled: true
+    num_experts: 8               # N: total number of experts
+    num_experts_per_tok: 2       # K_r: experts activated per token
+    num_shared_experts: 2        # K_s: shared experts
+    expert_hidden_size: 256      # FFN hidden dim in each expert
+    aux_loss_alpha: 0.001
+    seq_aux_loss: true
+    routed_scaling_factor: 1.0
+    router_bias: false
+    router_jitter_noise: 0.0
+    
+  moe_layer_freq: 2
+  first_moe_layer: 1
+  
+  # Standard FFN
+  intermediate_size: 512
+  hidden_act: silu
+  
+  # Multi-Token Prediction
+  mtp:
+    enabled: true
+    num_predict_tokens: 2
+    mtp_loss_weight: 0.3
+  
+  # Regularization
+  hidden_dropout: 0.0
+  attention_dropout: 0.0
+  expert_dropout: 0.0
+  
+  # Normalization
+  rms_norm_eps: 1.0e-6
+  
+  # Embeddings
+  tie_word_embeddings: true
+  initializer_range: 0.02
+
+# ==================== Pretraining ====================
+pretraining:
+  batch_size: 8                  # Reduced for larger model
+  num_epochs: 1
+  learning_rate: 1.0e-4
+  min_learning_rate: 1.0e-6
+  warmup_steps: 1000
+  max_steps: 50000               # More training steps
+  
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  
+  optimizer: adamw
+  weight_decay: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  
+  lr_scheduler: cosine
+  
+  save_steps: 1000
+  save_total_limit: 5
+  checkpoint_dir: checkpoints/pretrain_large
+  
+  logging_steps: 50
+  tensorboard_dir: runs/pretrain_large
+  
+  eval_steps: 500
+  eval_samples: 1000
+  
+  device: auto
+  mixed_precision: "no"          # Change to "fp16" or "bf16" if GPU supports
+  
+  seed: 42
+
+# ==================== Data ====================
+data:
+  # OpenWebText dataset for large scale training
+  pretrain:
+    dataset_name: openwebtext
+    dataset_config: null
+    data_dir: data/pretrain_large
+    max_seq_length: 512
+    max_samples: 2000000         # ~10GB of text (about 5 billion tokens)
+    streaming: false
+    
+  sft:
+    dataset_name: tatsu-lab/alpaca
+    data_dir: data/sft
+    max_seq_length: 512
+    max_samples: 10000
+    
+  rl:
+    dataset_name: Anthropic/hh-rlhf
+    dataset_config: helpful-base
+    data_dir: data/rl
+    max_seq_length: 256
+    max_samples: 1000
+  
+  tokenizer_name: gpt2
+  
+  num_workers: 4
+  pin_memory: true
+  shuffle: true
+
+# ==================== Visualization ====================
+visualization:
+  visualize_attention: true
+  attention_log_steps: 500
+  num_attention_heads_to_show: 4
+  num_attention_layers_to_show: 2
+  
+  visualize_moe: true
+  moe_log_steps: 500
+  
+  visualize_mtp: true
+  mtp_log_steps: 500
+  
+  visualize_rope: true
+  rope_log_steps: 2000
+  
+  visualize_masks: true
+  mask_log_steps: 2000
+  
+  visualize_embeddings: false    # Disable for performance
+  embedding_log_steps: 5000
+  num_embedding_samples: 500
+  
+  visualize_loss: true
+  
+  visualize_weights: true
+  weights_log_steps: 2000
+  
+  visualize_gradients: true
+  gradient_log_steps: 500
+  
+  visualize_generation: true
+  generation_log_steps: 1000
+  generation_prompts:
+    - "The meaning of life is"
+    - "In the beginning"
+    - "Once upon a time"
+    - "Artificial intelligence will"
+    - "The future of computing"
+    - "Scientists have discovered"
+    - "The stock market today"
+  generation_max_length: 100
+  generation_temperature: 0.7
+
+# ==================== SFT ====================
+sft:
+  batch_size: 4
+  num_epochs: 3
+  learning_rate: 1.0e-5
+  min_learning_rate: 1.0e-7
+  warmup_ratio: 0.03
+  max_steps: 5000
+  
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  
+  optimizer: adamw
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  
+  lr_scheduler: cosine
+  
+  save_steps: 500
+  save_total_limit: 3
+  checkpoint_dir: checkpoints/sft_large
+  
+  logging_steps: 20
+  tensorboard_dir: runs/sft_large
+  
+  eval_steps: 250
+  
+  use_lora: false
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+  
+  device: auto
+  mixed_precision: "no"
+  seed: 42
+
+# ==================== RL ====================
+rl:
+  algorithm: grpo
+  
+  batch_size: 2
+  num_epochs: 1
+  learning_rate: 1.0e-7
+  min_learning_rate: 1.0e-8
+  warmup_ratio: 0.0
+  max_steps: 1000
+  
+  group_size: 4
+  kl_coef: 0.1
+  clip_range: 0.2
+  gamma: 1.0
+  
+  reward_model: rule_based
+  
+  gradient_accumulation_steps: 16
+  max_grad_norm: 1.0
+  
+  optimizer: adamw
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  
+  save_steps: 200
+  checkpoint_dir: checkpoints/rl_large
+  
+  logging_steps: 10
+  tensorboard_dir: runs/rl_large
+  
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true
+  
+  device: auto
+  mixed_precision: "no"
+  seed: 42
+
+# ==================== Inference ====================
+inference:
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  repetition_penalty: 1.1
+  
+  use_mtp_decoding: true
+  
+  batch_size: 4
+  
+  device: auto

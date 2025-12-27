@@ -1,0 +1,324 @@
+# DeepSeek V3 Configuration for Learning/Experimentation
+# Scaled down for single GPU training while preserving all architectural features
+
+experiment_name: deepseek_v3_pretrain
+
+# ==================== Model Architecture ====================
+model:
+  # Basic dimensions
+  vocab_size: 50257              # GPT-2 tokenizer vocab size
+  hidden_size: 128               # D: model hidden dimension (d_model)
+  max_position_embeddings: 128  # Maximum sequence length
+  num_hidden_layers: 4           # Number of transformer blocks
+  
+  # Multi-head Latent Attention (MLA) - DeepSeek V3's key innovation
+  # MLA uses low-rank KV compression for efficient inference
+  num_attention_heads: 2         # H: number of query heads (n_heads)
+  head_dim: 32                   # d_h: dimension per head
+  kv_lora_rank: 32               # d_c: compressed KV dimension (c_kv in paper)
+  q_lora_rank: 64                # d_c': compressed Q dimension (c_q in paper)
+  qk_nope_head_dim: 16           # d_h^nope: non-positional embedding dim per head
+  qk_rope_head_dim: 16           # d_h^rope: rotary positional embedding dim per head
+  v_head_dim: 32                 # d_h^v: value head dimension
+  
+  # RoPE (Rotary Position Embedding)
+  rope_theta: 10000.0            # RoPE base frequency
+  rope_scaling: null             # Optional: {type: yarn, factor: 4.0} for extended context
+  
+  # DeepSeekMoE Configuration - Mixture of Experts
+  moe:
+    enabled: true                # Enable MoE layers
+    num_experts: 4              # N: total number of experts
+    num_experts_per_tok: 1       # K_r: experts activated per token (top-k routing)
+    num_shared_experts: 1        # K_s: shared experts (always activated)
+    expert_hidden_size: 64      # FFN hidden dim in each expert
+    aux_loss_alpha: 0.001        # Auxiliary load balancing loss coefficient
+    seq_aux_loss: true           # Sequence-level auxiliary loss
+    routed_scaling_factor: 1.0   # Scaling factor for routed experts
+    
+    # Expert routing
+    router_bias: false           # Use bias in router
+    router_jitter_noise: 0.0     # Noise for load balancing during training
+    
+  # MoE layer placement
+  # Every 2nd layer uses MoE, others use standard FFN
+  moe_layer_freq: 2              # Apply MoE every N layers (1=all, 2=alternating)
+  first_moe_layer: 1             # First layer index to use MoE (0-indexed)
+  
+  # Standard FFN (for non-MoE layers)
+  intermediate_size: 128        # I: FFN hidden dimension (~2.75 * D)
+  hidden_act: silu               # SwiGLU activation
+  
+  # Multi-Token Prediction (MTP) - DeepSeek V3's auxiliary objective
+  mtp:
+    enabled: true                # Enable multi-token prediction
+    num_predict_tokens: 2        # Number of additional tokens to predict
+    mtp_loss_weight: 0.3         # Weight for MTP loss
+  
+  # Regularization
+  hidden_dropout: 0.0
+  attention_dropout: 0.0
+  expert_dropout: 0.0
+  
+  # Normalization
+  rms_norm_eps: 1.0e-6
+  
+  # Embeddings
+  tie_word_embeddings: true
+  initializer_range: 0.02
+
+# ==================== Pretraining ====================
+pretraining:
+  # Basic training
+  batch_size: 16
+  num_epochs: 1
+  learning_rate: 3.0e-4
+  min_learning_rate: 1.0e-6
+  warmup_steps: 200
+  max_steps: 50000                # Maximum training steps
+  
+  # Gradient
+  gradient_accumulation_steps: 2
+  max_grad_norm: 1.0
+  
+  # Optimizer (AdamW)
+  optimizer: adamw
+  weight_decay: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  
+  # Learning rate schedule
+  lr_scheduler: cosine
+  
+  # Checkpointing
+  save_steps: 500
+  save_total_limit: 3
+  checkpoint_dir: checkpoints/pretrain
+  
+  # Logging
+  logging_steps: 20
+  tensorboard_dir: runs/pretrain
+  
+  # Evaluation
+  eval_steps: 200
+  eval_samples: 500
+  
+  # Device
+  device: auto                   # auto, cuda, mps, cpu
+  mixed_precision: "no"          # no, fp16, bf16
+  
+  # Reproducibility
+  seed: 42
+
+# ==================== SFT (Supervised Fine-Tuning) ====================
+sft:
+  # Basic training
+  batch_size: 8
+  num_epochs: 3
+  learning_rate: 2.0e-5
+  min_learning_rate: 1.0e-7
+  warmup_ratio: 0.03
+  max_steps: 2000
+  
+  # Gradient
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  
+  # Optimizer
+  optimizer: adamw
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  
+  # LR schedule
+  lr_scheduler: cosine
+  
+  # Checkpointing
+  save_steps: 200
+  save_total_limit: 2
+  checkpoint_dir: checkpoints/sft
+  
+  # Logging
+  logging_steps: 10
+  tensorboard_dir: runs/sft
+  
+  # Evaluation
+  eval_steps: 100
+  
+  # LoRA (optional for memory efficiency)
+  use_lora: false
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+  
+  # Device
+  device: auto
+  mixed_precision: "no"
+  seed: 42
+
+# ==================== RL (Reinforcement Learning - GRPO) ====================
+# Group Relative Policy Optimization (DeepSeek's RL approach)
+rl:
+  # Algorithm
+  algorithm: grpo                # GRPO: Group Relative Policy Optimization
+  
+  # Basic training
+  batch_size: 4
+  num_epochs: 1
+  learning_rate: 5.0e-7
+  min_learning_rate: 1.0e-8
+  warmup_ratio: 0.0
+  max_steps: 500
+  
+  # GRPO specific
+  group_size: 8                  # G: number of responses per prompt
+  kl_coef: 0.1                   # KL penalty coefficient
+  clip_range: 0.2                # PPO-style clipping
+  gamma: 1.0                     # Discount factor
+  
+  # Reward model
+  reward_model: rule_based       # rule_based for demo, can be neural
+  
+  # Gradient
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  
+  # Optimizer
+  optimizer: adamw
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  
+  # Checkpointing
+  save_steps: 100
+  checkpoint_dir: checkpoints/rl
+  
+  # Logging
+  logging_steps: 5
+  tensorboard_dir: runs/rl
+  
+  # Generation during RL
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true
+  
+  # Device
+  device: auto
+  mixed_precision: "no"
+  seed: 42
+
+# ==================== Data ====================
+data:
+  # Pretrain dataset
+  # For large scale training: use openwebtext (40GB)
+  # For quick testing: use wikitext (13MB)
+  pretrain:
+    dataset_name: wikitext  # Change to 'openwebtext' for large scale training
+    dataset_config: wikitext-2-raw-v1  # Set to null for openwebtext
+    data_dir: data/pretrain
+    max_seq_length: 512
+    max_samples: null  # Set to 2000000 for ~10GB from openwebtext
+    streaming: false  # Set to true for very large datasets
+    
+  # SFT dataset (Alpaca-like: ~50MB)
+  sft:
+    dataset_name: tatsu-lab/alpaca
+    data_dir: data/sft
+    max_seq_length: 512
+    max_samples: 10000           # Limit samples for quick training
+    
+  # RL dataset (prompts only: ~5MB)
+  rl:
+    dataset_name: Anthropic/hh-rlhf
+    dataset_config: helpful-base
+    data_dir: data/rl
+    max_seq_length: 256
+    max_samples: 1000
+  
+  # Tokenizer
+  tokenizer_name: gpt2
+  
+  # Data loading
+  num_workers: 4
+  pin_memory: true
+  shuffle: true
+
+# ==================== Visualization ====================
+visualization:
+  # Attention patterns (MLA visualization)
+  visualize_attention: true
+  attention_log_steps: 200
+  num_attention_heads_to_show: 4
+  num_attention_layers_to_show: 2
+  
+  # MoE routing analysis
+  visualize_moe: true
+  moe_log_steps: 200
+  
+  # Multi-Token Prediction
+  visualize_mtp: true
+  mtp_log_steps: 200
+  
+  # RoPE
+  visualize_rope: true
+  rope_log_steps: 1000
+  
+  # Mask patterns
+  visualize_masks: true
+  mask_log_steps: 1000
+  
+  # Embeddings (t-SNE/UMAP)
+  visualize_embeddings: true
+  embedding_log_steps: 2000
+  num_embedding_samples: 500
+  
+  # Loss curves
+  visualize_loss: true
+  
+  # Weight distributions
+  visualize_weights: true
+  weights_log_steps: 1000
+  
+  # Gradient flow
+  visualize_gradients: true
+  gradient_log_steps: 200
+  
+  # Text generation samples
+  visualize_generation: true
+  generation_log_steps: 500
+  generation_prompts:
+    - "The meaning of life is"
+    - "In the beginning"
+    - "Once upon a time"
+    - "Artificial intelligence will"
+    - "The future of computing"
+  generation_max_length: 100
+  generation_temperature: 0.7
+
+# ==================== Inference ====================
+inference:
+  # Generation parameters
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  repetition_penalty: 1.1
+  
+  # MTP speculative decoding
+  use_mtp_decoding: true
+  
+  # Batch inference
+  batch_size: 4
+  
+  # Device
+  device: auto
